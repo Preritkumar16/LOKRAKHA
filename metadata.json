@@ -1,0 +1,6 @@
+{
+  "name": "LOKRAKSHA Safety Dashboard",
+  "description": "Offline-first, decentralized local safety and incident-response dashboard for the standalone LOKRAKSHA peer node device.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,170 @@
+/* ==========================================================================
+   LOKRAKSHA RESPONSIVE STYLES
+   Mobile, Tablet, Desktop, and Large Display Adaptations
+   ========================================================================== */
+
+/* Large screens (>= 1200px) */
+@media (min-width: 1200px) {
+  .dashboard-grid {
+    grid-template-columns: repeat(12, 1fr);
+  }
+}
+
+/* Tablets and medium screens (<= 1024px) */
+@media (max-width: 1024px) {
+  :root {
+    --sidebar-width: 220px;
+  }
+
+  .col-8 { grid-column: span 12; }
+  .col-4 { grid-column: span 12; }
+  .col-6 { grid-column: span 12; }
+  .col-3 { grid-column: span 6; }
+
+  .messaging-container {
+    grid-template-columns: 240px 1fr;
+  }
+}
+
+/* Mobile Screens (<= 768px) */
+@media (max-width: 768px) {
+  :root {
+    --header-height: 56px;
+  }
+
+  #app-container {
+    flex-direction: column;
+  }
+
+  /* Sidebar transforms to off-canvas drawer */
+  #sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 280px;
+    transform: translateX(-100%);
+    box-shadow: 10px 0 30px rgba(0, 0, 0, 0.7);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  #sidebar.mobile-open {
+    transform: translateX(0);
+  }
+
+  .sidebar-backdrop {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(4px);
+    z-index: 35;
+  }
+
+  .sidebar-backdrop.active {
+    display: block;
+  }
+
+  .menu-toggle {
+    display: flex;
+  }
+
+  #top-header {
+    padding: 0 1rem;
+  }
+
+  .header-tags {
+    display: none;
+  }
+
+  #view-container {
+    padding: 1rem;
+  }
+
+  /* Device Hero banner stacked */
+  .device-hero-card {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 1.15rem;
+  }
+
+  .device-hero-left {
+    align-items: flex-start;
+  }
+
+  .sos-action-card {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .sos-hold-btn {
+    width: 100%;
+    justify-content: center;
+    padding: 1rem;
+  }
+
+  .sos-hint {
+    max-width: 100%;
+    text-align: center;
+  }
+
+  /* Grid columns collapsed */
+  .col-12, .col-8, .col-6, .col-4, .col-3 {
+    grid-column: span 12;
+  }
+
+  .metric-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* Messaging stacked on mobile */
+  .messaging-container {
+    grid-template-columns: 1fr;
+    height: calc(100vh - var(--header-height) - 2rem);
+  }
+
+  .chat-sidebar {
+    display: none; /* Can be toggled if needed */
+  }
+
+  /* Map controls */
+  .map-floating-panel {
+    top: auto;
+    bottom: 1rem;
+    right: 0.5rem;
+    left: 0.5rem;
+    max-width: none;
+  }
+
+  /* Demo drawer mobile */
+  #demo-drawer {
+    left: 1rem;
+    right: 1rem;
+    bottom: 1rem;
+    max-width: none;
+  }
+
+  /* Toast position */
+  #toast-container {
+    left: 1rem;
+    right: 1rem;
+    bottom: 1rem;
+  }
+}
+
+/* Small mobile devices (<= 480px) */
+@media (max-width: 480px) {
+  .metric-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .device-hero-meta h1 {
+    font-size: 1.2rem;
+  }
+
+  .risk-display-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
