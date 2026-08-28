@@ -175,6 +175,62 @@ function bindOfflineStatus() {
   updateOfflineMapStatus();
 }
 
+let popupTickerInterval = null;
+
+/**
+ * Format relative time ago helper
+ * @param {number} timestamp
+ * @returns {string}
+ */
+function formatTimeAgo(timestamp) {
+  if (!timestamp) return "Unknown";
+  const elapsedSec = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (elapsedSec <= 1) return "Just now";
+  if (elapsedSec < 60) return `${elapsedSec} seconds ago`;
+  const mins = Math.floor(elapsedSec / 60);
+  if (mins < 60) return `${mins} minute${mins > 1 ? 's' : ''} ago`;
+  const hours = Math.floor(mins / 60);
+  return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+}
+
+/**
+ * Resolves current/last-known device coordinates with strict priority
+ * @returns {{lat: number, lng: number}}
+ */
+export function getDeviceCoordinates() {
+  const isLiveConnected = appState.connection?.mode === "live" && appState.connection?.status === "connected";
+  const isMockMode = appState.connection?.mode === "mock" || appState.connection?.status === "mock_mode";
+
+  let lat = null;
+  let lng = null;
+
+  if (isLiveConnected || isMockMode) {
+    if (typeof appState.telemetry?.lat === "number" && typeof appState.telemetry?.lng === "number" &&
+        isFinite(appState.telemetry.lat) && isFinite(appState.telemetry.lng) &&
+        !(appState.telemetry.lat === 0 && appState.telemetry.lng === 0)) {
+      lat = appState.telemetry.lat;
+      lng = appState.telemetry.lng;
+    }
+  }
+
+  if (lat === null || lng === null) {
+    if (appState.lastKnownLocation && typeof appState.lastKnownLocation.lat === "number" && typeof appState.lastKnownLocation.lng === "number" &&
+        isFinite(appState.lastKnownLocation.lat) && isFinite(appState.lastKnownLocation.lng) &&
+        !(appState.lastKnownLocation.lat === 0 && appState.lastKnownLocation.lng === 0)) {
+      lat = appState.lastKnownLocation.lat;
+      lng = appState.lastKnownLocation.lng;
+    } else if (appState.telemetry && typeof appState.telemetry.lat === "number" && typeof appState.telemetry.lng === "number") {
+      lat = appState.telemetry.lat;
+      lng = appState.telemetry.lng;
+    } else {
+      lat = 19.2060;
+      lng = 72.8746;
+    }
+  }
+
+  return { lat, lng };
+}
+
 /**
  * Initialize Safety Map view
  */
@@ -204,9 +260,23 @@ export function initSafetyMap() {
   // State subscriptions must be registered exactly once.
   if (!mapSubscriptionsBound) {
     subscribe("telemetry", () => updateCurrentDeviceLocation());
+    subscribe("lastKnownLocation", () => updateCurrentDeviceLocation());
+    subscribe("connection", () => updateCurrentDeviceLocation());
+    subscribe("device", () => updateCurrentDeviceLocation());
     subscribe("nodes", () => updatePeerNodeMarkers());
     subscribe("incidents", () => updateIncidentMarkers());
     mapSubscriptionsBound = true;
+  }
+
+  // Real-time ticker for map popup "Last seen" duration
+  if (!popupTickerInterval) {
+    popupTickerInterval = setInterval(() => {
+      const el = document.getElementById("map-popup-last-seen");
+      if (el) {
+        const lastSeenTs = appState.lastKnownLocation?.timestamp || appState.telemetry?.lastUpdate || Date.now();
+        el.textContent = formatTimeAgo(lastSeenTs);
+      }
+    }, 1000);
   }
 }
 
@@ -259,7 +329,11 @@ export function renderMapLayout() {
         <div class="map-legend">
           <div class="legend-item">
             <div class="legend-dot" style="background:#06b6d4; box-shadow:0 0 6px #06b6d4;"></div>
-            <span>Local Device (LKRK-001)</span>
+            <span>Local Device (Active Live)</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-dot" style="background:#64748b; border:1px dashed #cbd5e1;"></div>
+            <span>Local Device (Offline / Last Known)</span>
           </div>
           <div class="legend-item">
             <div class="legend-dot" style="background:var(--color-safe);"></div>
@@ -267,7 +341,7 @@ export function renderMapLayout() {
           </div>
           <div class="legend-item">
             <div class="legend-dot" style="background:var(--color-caution);"></div>
-            <span>Caution Zone / Warning</span>
+            <span>Caution Zone / GPS Lost</span>
           </div>
           <div class="legend-item">
             <div class="legend-dot" style="background:var(--color-restricted);"></div>
@@ -281,8 +355,9 @@ export function renderMapLayout() {
   bindOfflineStatus();
 
   document.getElementById("map-recenter-btn")?.addEventListener("click", () => {
-    if (mapInstance && appState.telemetry) {
-      mapInstance.setView([appState.telemetry.lat, appState.telemetry.lng], 14);
+    const { lat, lng } = getDeviceCoordinates();
+    if (mapInstance && typeof lat === "number" && typeof lng === "number") {
+      mapInstance.setView([lat, lng], 14);
     }
   });
 }
@@ -300,12 +375,11 @@ function setupLeafletMap() {
     return;
   }
 
-  const initialLat = Number(appState.telemetry?.lat) || 19.0760;
-  const initialLng = Number(appState.telemetry?.lng) || 72.8777;
+  const { lat: initialLat, lng: initialLng } = getDeviceCoordinates();
 
   mapInstance = L.map(mapEl, {
     center: [initialLat, initialLng],
-    zoom: 12,
+    zoom: 14,
     minZoom: 10,
     maxZoom: 14,
     maxBounds: [[18.75, 72.65], [19.4, 73.15]],
@@ -415,19 +489,160 @@ function drawSafetyZones() {
 }
 
 /**
- * Update / Draw Local Device Marker with radar pulsing halo
+ * Update / Draw Local Device Marker with dynamic live/offline/caution/mock status
  */
 function updateCurrentDeviceLocation() {
   if (!mapInstance) return;
 
-  const lat = appState.telemetry.lat;
-  const lng = appState.telemetry.lng;
+  const { lat, lng } = getDeviceCoordinates();
+  if (typeof lat !== "number" || typeof lng !== "number" || !isFinite(lat) || !isFinite(lng)) return;
+
+  const conn = appState.connection;
+  const isLiveConnected = conn.mode === "live" && conn.status === "connected";
+  const isMockMode = conn.mode === "mock" || conn.status === "mock_mode";
+  const isDisconnected = !isLiveConnected && !isMockMode;
   const isSos = appState.device.status === "SOS";
+  const isGpsValid = appState.telemetry.gpsValid !== false && appState.telemetry.gpsFix !== "NO_FIX" && appState.telemetry.gpsStatus !== "NO_FIX";
+
+  let markerClass = "marker-live";
+  let popupHtml = "";
+
+  if (isDisconnected) {
+    // STATE 2 — ESP32 DISCONNECTED: Keep marker at last known location, mark OFFLINE
+    markerClass = "marker-offline";
+    const lastSeenTs = appState.lastKnownLocation?.timestamp || appState.telemetry?.lastUpdate || Date.now();
+
+    popupHtml = `
+      <div class="map-popup-card">
+        <div class="map-popup-header" style="color:var(--text-secondary);">
+          ★ ${appState.device.name} (${appState.device.id})
+        </div>
+        <div class="map-popup-stat">
+          <span>Status:</span>
+          <strong style="color:var(--color-restricted)">${isSos ? 'SOS (OFFLINE)' : 'OFFLINE'}</strong>
+        </div>
+        <div class="map-popup-stat">
+          <span>GPS Fix:</span>
+          <strong style="color:var(--color-caution)">LAST KNOWN</strong>
+        </div>
+        <div class="map-popup-stat">
+          <span>Last Coordinates:</span>
+          <strong style="font-family:var(--font-mono)">${lat.toFixed(6)}, ${lng.toFixed(6)}</strong>
+        </div>
+        <div class="map-popup-stat">
+          <span>Last Seen:</span>
+          <strong id="map-popup-last-seen">${formatTimeAgo(lastSeenTs)}</strong>
+        </div>
+        <div class="map-popup-stat" style="margin-top:4px; padding-top:4px; border-top:1px solid var(--border-subtle);">
+          <span>Location Status:</span>
+          <strong style="color:var(--color-caution)">⚠ LAST KNOWN LOCATION</strong>
+        </div>
+        <div style="font-size:0.72rem; color:var(--color-restricted); margin-top:4px; background:rgba(239,68,68,0.1); padding:4px 6px; border-radius:4px; border:1px solid rgba(239,68,68,0.2);">
+          ⚠ Device disconnected • Showing last known location
+        </div>
+      </div>
+    `;
+  } else if (isLiveConnected) {
+    if (isGpsValid) {
+      // STATE 1 — ESP32 CONNECTED + GPS AVAILABLE: Live marker & live status
+      markerClass = "marker-live";
+      popupHtml = `
+        <div class="map-popup-card">
+          <div class="map-popup-header">
+            ★ ${appState.device.name} (${appState.device.id})
+          </div>
+          <div class="map-popup-stat">
+            <span>Status:</span>
+            <strong style="color:${isSos ? 'var(--color-restricted)' : 'var(--color-safe)'}">${isSos ? 'SOS DISTRESS' : 'ONLINE'}</strong>
+          </div>
+          <div class="map-popup-stat">
+            <span>GPS Fix:</span>
+            <strong style="color:var(--color-safe)">${appState.telemetry.gpsFix || '3D FIX'}</strong>
+          </div>
+          <div class="map-popup-stat">
+            <span>Battery:</span>
+            <strong>${appState.telemetry.battery}%</strong>
+          </div>
+          <div class="map-popup-stat">
+            <span>Coordinates:</span>
+            <strong style="font-family:var(--font-mono)">${lat.toFixed(6)}, ${lng.toFixed(6)}</strong>
+          </div>
+          <div class="map-popup-stat" style="margin-top:4px; padding-top:4px; border-top:1px solid var(--border-subtle);">
+            <span>Location Status:</span>
+            <strong style="color:var(--color-safe)">● LIVE LOCATION</strong>
+          </div>
+        </div>
+      `;
+    } else {
+      // STATE 3 — ESP32 CONNECTED BUT GPS UNAVAILABLE / NO FIX
+      markerClass = "marker-caution";
+      popupHtml = `
+        <div class="map-popup-card">
+          <div class="map-popup-header">
+            ★ ${appState.device.name} (${appState.device.id})
+          </div>
+          <div class="map-popup-stat">
+            <span>Status:</span>
+            <strong style="color:${isSos ? 'var(--color-restricted)' : 'var(--color-safe)'}">${isSos ? 'SOS DISTRESS' : 'ONLINE'}</strong>
+          </div>
+          <div class="map-popup-stat">
+            <span>GPS Fix:</span>
+            <strong style="color:var(--color-caution)">UNAVAILABLE (NO FIX)</strong>
+          </div>
+          <div class="map-popup-stat">
+            <span>Battery:</span>
+            <strong>${appState.telemetry.battery}%</strong>
+          </div>
+          <div class="map-popup-stat">
+            <span>Last Coordinates:</span>
+            <strong style="font-family:var(--font-mono)">${lat.toFixed(6)}, ${lng.toFixed(6)}</strong>
+          </div>
+          <div class="map-popup-stat" style="margin-top:4px; padding-top:4px; border-top:1px solid var(--border-subtle);">
+            <span>Location Status:</span>
+            <strong style="color:var(--color-caution)">⚠ LAST KNOWN LOCATION</strong>
+          </div>
+          <div style="font-size:0.72rem; color:var(--color-caution); margin-top:4px; background:rgba(245,158,11,0.1); padding:4px 6px; border-radius:4px; border:1px solid rgba(245,158,11,0.2);">
+            ⚠ GPS Signal Lost • Showing last known location
+          </div>
+        </div>
+      `;
+    }
+  } else {
+    // STATE 4 — MOCK SIMULATOR MODE
+    markerClass = "marker-mock";
+    popupHtml = `
+      <div class="map-popup-card">
+        <div class="map-popup-header">
+          ★ ${appState.device.name} (${appState.device.id})
+        </div>
+        <div class="map-popup-stat">
+          <span>Status:</span>
+          <strong style="color:var(--color-cyan)">MOCK SIMULATOR</strong>
+        </div>
+        <div class="map-popup-stat">
+          <span>GPS Fix:</span>
+          <strong style="color:var(--color-cyan)">SIMULATED 3D FIX</strong>
+        </div>
+        <div class="map-popup-stat">
+          <span>Battery:</span>
+          <strong>${appState.telemetry.battery}%</strong>
+        </div>
+        <div class="map-popup-stat">
+          <span>Coordinates:</span>
+          <strong style="font-family:var(--font-mono)">${lat.toFixed(6)}, ${lng.toFixed(6)}</strong>
+        </div>
+        <div class="map-popup-stat" style="margin-top:4px; padding-top:4px; border-top:1px solid var(--border-subtle);">
+          <span>Location Status:</span>
+          <strong style="color:var(--color-cyan)">● SIMULATED LOCATION</strong>
+        </div>
+      </div>
+    `;
+  }
 
   const deviceHtml = `
-    <div style="position:relative; width:36px; height:36px; display:flex; align-items:center; justify-content:center;">
-      <div style="position:absolute; width:100%; height:100%; border-radius:50%; background:${isSos ? 'rgba(239, 68, 68, 0.4)' : 'rgba(6, 182, 212, 0.35)'}; animation:pulse-danger 2s infinite;"></div>
-      <div style="width:16px; height:16px; border-radius:50%; background:${isSos ? '#ef4444' : '#06b6d4'}; border:3px solid #ffffff; box-shadow:0 0 10px ${isSos ? '#ef4444' : '#06b6d4'};"></div>
+    <div class="device-marker-wrap ${markerClass} ${isSos ? 'marker-sos' : ''}">
+      <div class="device-marker-pulse"></div>
+      <div class="device-marker-core"></div>
     </div>
   `;
 
@@ -445,29 +660,12 @@ function updateCurrentDeviceLocation() {
     currentDeviceMarker.setIcon(customIcon);
   }
 
-  currentDeviceMarker.bindPopup(`
-    <div class="map-popup-card">
-      <div class="map-popup-header">
-        ★ ${appState.device.name} (${appState.device.id})
-      </div>
-      <div class="map-popup-stat">
-        <span>Status:</span>
-        <strong style="color:${isSos ? 'var(--color-restricted)' : 'var(--color-safe)'}">${appState.device.status}</strong>
-      </div>
-      <div class="map-popup-stat">
-        <span>GPS Fix:</span>
-        <strong>${appState.telemetry.gpsFix}</strong>
-      </div>
-      <div class="map-popup-stat">
-        <span>Battery:</span>
-        <strong>${appState.telemetry.battery}%</strong>
-      </div>
-      <div class="map-popup-stat">
-        <span>Coordinates:</span>
-        <strong style="font-family:var(--font-mono)">${lat.toFixed(5)}, ${lng.toFixed(5)}</strong>
-      </div>
-    </div>
-  `);
+  currentDeviceMarker.bindPopup(popupHtml);
+
+  // If popup is currently open, update its content dynamically
+  if (currentDeviceMarker.isPopupOpen && currentDeviceMarker.isPopupOpen()) {
+    currentDeviceMarker.getPopup()?.setContent(popupHtml);
+  }
 }
 
 /**

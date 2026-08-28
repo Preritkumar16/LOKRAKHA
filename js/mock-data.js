@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  * LOKRAKSHA Mock Data Provider
- * Matches the exact JSON structure of the physical ESP32 device firmware
+ * Geographically centered around Thakur College of Engineering & Technology (TCET), Kandivali East, Mumbai
  */
 
 export const initialMockData = {
@@ -19,7 +19,7 @@ export const initialMockData = {
     isVerified: true
   },
 
-  // Real-time sensor telemetry
+  // Real-time sensor telemetry (Centered at TCET Campus: 19.2060° N, 72.8746° E)
   telemetry: {
     device_id: "LKRK-001",
     device_name: "LOKRAKSHA Alpha",
@@ -27,11 +27,13 @@ export const initialMockData = {
     humidity: 72,
     battery: 84,
     batteryVoltage: 4.12,
-    lat: 19.0760,
-    lng: 72.8777,
+    lat: 19.2060,
+    lng: 72.8746,
     altitude: 14.2,
     hdop: 0.9,
     gpsFix: "3D_FIX",
+    gpsStatus: "ACTIVE",
+    gpsValid: true,
     loraStatus: "CONNECTED",
     loraFrequency: "868.1 MHz",
     loraRssi: -78,
@@ -40,38 +42,38 @@ export const initialMockData = {
     risk: "LOW"
   },
 
-  // Designated geographic safety boundaries
+  // Designated geographic safety boundaries around TCET Campus & Thakur Village
   zones: [
     {
       id: "ZONE-SAFE-01",
-      name: "Campus Quad Safe Zone",
+      name: "TCET Campus Quad Safe Zone",
       type: "SAFE",
-      lat: 19.0760,
-      lng: 72.8777,
-      radius: 200,
-      description: "Designated high-security safe gathering area with continuous peer mesh coverage."
+      lat: 19.2060,
+      lng: 72.8746,
+      radius: 180,
+      description: "Designated high-security safe gathering area with continuous peer mesh coverage across TCET campus."
     },
     {
       id: "ZONE-CAUTION-01",
-      name: "North Perimeter Corridor",
+      name: "Thakur Village Transit Corridor",
       type: "CAUTION",
-      lat: 19.0780,
-      lng: 72.8765,
+      lat: 19.2082,
+      lng: 72.8762,
       radius: 160,
-      description: "Low-visibility transit corridor. Exercise situational awareness."
+      description: "Thakur Village commercial transit zone. Exercise situational awareness."
     },
     {
       id: "ZONE-RESTRICTED-01",
-      name: "Hazardous Chemical / Sump Zone",
+      name: "Western Express Highway Boundary Hazard",
       type: "RESTRICTED",
-      lat: 19.0805,
-      lng: 72.8810,
-      radius: 140,
-      description: "Prohibited restricted area. Unescorted entry triggers automatic safety warning."
+      lat: 19.2038,
+      lng: 72.8705,
+      radius: 150,
+      description: "High-traffic highway perimeter. Unescorted exit triggers automatic safety alert."
     }
   ],
 
-  // Nearby independent decentralized peer nodes
+  // Nearby independent decentralized peer nodes in and around Thakur College
   nodes: [
     {
       id: "LKRK-002",
@@ -82,8 +84,8 @@ export const initialMockData = {
       rssi: -74,
       snr: 8.5,
       battery: 92,
-      lat: 19.0772,
-      lng: 72.8790,
+      lat: 19.2072,
+      lng: 72.8755,
       temperature: 30.8,
       humidity: 70,
       lastSeen: Date.now() - 12000,
@@ -99,8 +101,8 @@ export const initialMockData = {
       rssi: -82,
       snr: 6.2,
       battery: 76,
-      lat: 19.0745,
-      lng: 72.8760,
+      lat: 19.2048,
+      lng: 72.8735,
       temperature: 32.1,
       humidity: 74,
       lastSeen: Date.now() - 25000,
@@ -116,8 +118,8 @@ export const initialMockData = {
       rssi: -89,
       snr: 4.8,
       battery: 48,
-      lat: 19.0785,
-      lng: 72.8745,
+      lat: 19.2078,
+      lng: 72.8740,
       temperature: 33.0,
       humidity: 68,
       lastSeen: Date.now() - 40000,
@@ -133,8 +135,8 @@ export const initialMockData = {
       rssi: -68,
       snr: 10.4,
       battery: 88,
-      lat: 19.0735,
-      lng: 72.8795,
+      lat: 19.2042,
+      lng: 72.8762,
       temperature: 30.5,
       humidity: 71,
       lastSeen: Date.now() - 8000,
@@ -150,7 +152,7 @@ export const initialMockData = {
       from: "LKRK-002",
       to: "BROADCAST",
       type: "BROADCAST",
-      text: "LOKRAKSHA Bravo peer node online on 868.1 MHz. Mesh routing active.",
+      text: "LOKRAKSHA Bravo peer node online on 868.1 MHz. TCET campus mesh routing active.",
       priority: "NORMAL",
       timestamp: Date.now() - 360000,
       status: "DELIVERED"
@@ -160,7 +162,7 @@ export const initialMockData = {
       from: "LKRK-003",
       to: "LKRK-001",
       type: "DIRECT",
-      text: "Peer beacon received. Signal RSSI -82 dBm, link stable.",
+      text: "Peer beacon received from Sports Wing. Signal RSSI -82 dBm, link stable.",
       priority: "NORMAL",
       timestamp: Date.now() - 180000,
       status: "DELIVERED"
@@ -175,9 +177,9 @@ export const initialMockData = {
       sourceName: "LOKRAKSHA Charlie",
       type: "CAUTION_ZONE",
       title: "Perimeter Caution Warning",
-      lat: 19.0780,
-      lng: 72.8765,
-      zone: "North Perimeter Corridor",
+      lat: 19.2082,
+      lng: 72.8762,
+      zone: "Thakur Village Transit Corridor",
       temperature: 32.1,
       humidity: 74,
       battery: 76,

@@ -16,6 +16,8 @@ export function initDashboard() {
   if (!container) return;
 
   renderDashboard();
+  updateDashboardConnection();
+  updateDashboardTelemetry();
 
   // Subscribe to reactive state changes
   subscribe("telemetry", () => updateDashboardTelemetry());
@@ -133,22 +135,39 @@ export function renderDashboard() {
 
       <!-- Column 1: Core Live Sensor Telemetry (Span 8) -->
       <div class="col-8">
-        <div class="lok-card">
+        <div class="lok-card" id="dash-telemetry-card">
           <div class="lok-card-header">
-            <div class="lok-card-title">
+            <div class="lok-card-title" id="dash-telemetry-title">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--color-cyan)" stroke-width="2">
                 <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
               </svg>
-              Live Sensor Telemetry
+              <span id="dash-telemetry-title-text">Live Sensor Telemetry</span>
+              <span id="dash-telemetry-title-status" class="telemetry-title-offline" style="display:none;">— OFFLINE</span>
             </div>
             <div style="display:flex; align-items:center; gap:0.5rem;">
               <span class="tag-badge tag-live" id="dash-telemetry-badge">GPS: ${telemetry.gpsStatus || 'ACTIVE'} • ${telemetry.gpsFix || '3D FIX'} • ${telemetry.hdop} HDOP</span>
             </div>
           </div>
 
+          <!-- Offline Telemetry Warning Banner -->
+          <div id="dash-telemetry-offline-banner" class="telemetry-offline-banner" style="display:none;">
+            <div class="telemetry-offline-banner-content">
+              <div class="telemetry-offline-banner-title">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                  <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+                <span>ESP32 DISCONNECTED</span>
+              </div>
+              <div class="telemetry-offline-banner-desc">
+                Unable to fetch live sensor data. Connect the ESP32 to resume real-time telemetry.
+              </div>
+            </div>
+          </div>
+
           <div class="metric-grid">
             <!-- Battery -->
-            <div class="metric-item">
+            <div class="metric-item" id="dash-card-battery">
               <div class="metric-label">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <rect x="1" y="6" width="18" height="12" rx="2"/><line x1="23" y1="11" x2="23" y2="13"/>
@@ -160,7 +179,7 @@ export function renderDashboard() {
             </div>
 
             <!-- Temperature -->
-            <div class="metric-item">
+            <div class="metric-item" id="dash-card-temp">
               <div class="metric-label">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/>
@@ -168,11 +187,11 @@ export function renderDashboard() {
                 Temperature
               </div>
               <div class="metric-value" id="dash-metric-temp">${telemetry.temperature}°C</div>
-              <div class="metric-sub">Ambient SHT40</div>
+              <div class="metric-sub" id="dash-metric-temp-sub">Ambient SHT40</div>
             </div>
 
             <!-- Humidity -->
-            <div class="metric-item">
+            <div class="metric-item" id="dash-card-humidity">
               <div class="metric-label">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>
@@ -180,11 +199,11 @@ export function renderDashboard() {
                 Humidity
               </div>
               <div class="metric-value" id="dash-metric-humidity">${telemetry.humidity}%</div>
-              <div class="metric-sub">Relative RH</div>
+              <div class="metric-sub" id="dash-metric-humidity-sub">Relative RH</div>
             </div>
 
             <!-- LoRa Mesh -->
-            <div class="metric-item">
+            <div class="metric-item" id="dash-card-lora">
               <div class="metric-label">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M5 12.55a11 11 0 0 1 14.08 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/>
@@ -197,7 +216,7 @@ export function renderDashboard() {
           </div>
 
           <!-- Location Coordinates Bar -->
-          <div style="margin-top: 1rem; padding: 0.75rem 1rem; background-color: var(--bg-surface-raised); border-radius: var(--radius-md); border: 1px solid var(--border-subtle); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;">
+          <div id="dash-coords-box" style="margin-top: 1rem; padding: 0.75rem 1rem; background-color: var(--bg-surface-raised); border-radius: var(--radius-md); border: 1px solid var(--border-subtle); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;">
             <div style="display:flex; align-items:center; gap:0.5rem;">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-cyan)" stroke-width="2">
                 <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
@@ -558,6 +577,8 @@ export function updateDashboardConnection() {
   if (modeBtnLabel) {
     modeBtnLabel.textContent = conn.mode === 'live' ? 'Switch to Mock' : 'Switch to Live ESP32';
   }
+
+  updateDashboardTelemetry();
 }
 
 function getConnectionStatusText(conn) {
@@ -565,9 +586,7 @@ function getConnectionStatusText(conn) {
     case "connected":
       return "ESP32 CONNECTED";
     case "connecting":
-      return "ESP32 CONNECTING...";
-    case "reconnecting":
-      return `ESP32 RECONNECTING (Attempt ${conn.reconnectAttempts || 1})...`;
+      return "CONNECTING...";
     case "mock_mode":
       return "MOCK SIMULATOR ACTIVE";
     case "disconnected":
@@ -582,8 +601,6 @@ function getConnectButtonText(conn) {
       return "Disconnect ESP32";
     case "connecting":
       return "Connecting...";
-    case "reconnecting":
-      return "Reconnecting...";
     case "mock_mode":
     case "disconnected":
     default:
@@ -596,7 +613,6 @@ function getConnectButtonClass(conn) {
     case "connected":
       return "btn-esp-disconnect";
     case "connecting":
-    case "reconnecting":
       return "btn-esp-connecting";
     case "mock_mode":
     case "disconnected":
@@ -611,6 +627,7 @@ function getConnectButtonClass(conn) {
 export function updateDashboardTelemetry() {
   const t = appState.telemetry;
   const d = appState.device;
+  const conn = appState.connection;
 
   const setEl = (id, val) => {
     const el = document.getElementById(id);
@@ -621,34 +638,146 @@ export function updateDashboardTelemetry() {
   setEl("dash-device-id", d.id);
   setEl("dash-device-name", d.name);
 
-  // Telemetry metrics
-  setEl("dash-metric-battery", `${t.battery}%`);
-  setEl("dash-metric-voltage", `${t.batteryVoltage} V (LiPo)`);
-  setEl("dash-metric-temp", `${t.temperature}°C`);
-  setEl("dash-metric-humidity", `${t.humidity}%`);
-  setEl("dash-metric-lora", t.loraStatus || "CONNECTED");
-  setEl("dash-metric-rssi", `RSSI: ${t.loraRssi} dBm`);
-  setEl("dash-coords", `${t.lat.toFixed(6)}, ${t.lng.toFixed(6)}`);
-  setEl("dash-alt-hdop", `ALT: ${t.altitude}m • HDOP: ${t.hdop}`);
+  const isLiveConnected = conn.mode === "live" && conn.status === "connected";
+  const isMockMode = conn.mode === "mock" || conn.status === "mock_mode";
+  const isDisconnected = !isLiveConnected && !isMockMode;
 
-  // GPS Badge
+  const offlineBanner = document.getElementById("dash-telemetry-offline-banner");
+  const titleStatus = document.getElementById("dash-telemetry-title-status");
+  const titleText = document.getElementById("dash-telemetry-title-text");
   const gpsBadge = document.getElementById("dash-telemetry-badge");
-  if (gpsBadge) {
-    gpsBadge.textContent = `GPS: ${t.gpsStatus || 'ACTIVE'} • ${t.gpsFix || '3D FIX'} • ${t.hdop} HDOP`;
-  }
+  const coordsBox = document.getElementById("dash-coords-box");
+  const loraValue = document.getElementById("dash-metric-lora");
+  const metricCards = ["dash-card-battery", "dash-card-temp", "dash-card-humidity", "dash-card-lora"];
 
-  // Latest Telemetry Timestamp
-  const tsEl = document.getElementById("dash-telemetry-timestamp");
-  if (tsEl) {
-    tsEl.textContent = t.lastUpdate ? new Date(t.lastUpdate).toLocaleTimeString() : 'Waiting for packet...';
-  }
+  if (isDisconnected) {
+    // 1. OFFLINE / DISCONNECTED State: Display clear placeholders & warning banner
+    if (offlineBanner) offlineBanner.style.display = "flex";
+    if (titleStatus) titleStatus.style.display = "inline";
+    if (titleText) titleText.textContent = "Live Sensor Telemetry";
 
-  updateRelativeTimestamp();
+    if (gpsBadge) {
+      gpsBadge.className = "tag-badge tag-offline";
+      gpsBadge.textContent = "⚠ OFFLINE • NO TELEMETRY";
+    }
+
+    metricCards.forEach(id => {
+      document.getElementById(id)?.classList.add("metric-unavailable");
+    });
+    coordsBox?.classList.add("coords-box-offline");
+
+    // Clear and set offline placeholder values
+    setEl("dash-metric-battery", "--");
+    setEl("dash-metric-voltage", "Data unavailable");
+    setEl("dash-metric-temp", "-- °C");
+    setEl("dash-metric-temp-sub", "Data unavailable");
+    setEl("dash-metric-humidity", "-- %");
+    setEl("dash-metric-humidity-sub", "Data unavailable");
+    setEl("dash-metric-lora", "OFFLINE");
+    if (loraValue) loraValue.style.color = "var(--color-restricted)";
+    setEl("dash-metric-rssi", "ESP32 disconnected");
+
+    setEl("dash-coords", "Location unavailable");
+    setEl("dash-alt-hdop", "Waiting for ESP32 connection");
+
+    const tsEl = document.getElementById("dash-telemetry-timestamp");
+    if (tsEl) tsEl.textContent = "Telemetry Offline";
+
+    const relEl = document.getElementById("dash-telemetry-relative");
+    if (relEl) relEl.textContent = "(ESP32 disconnected)";
+
+  } else if (isLiveConnected) {
+    // 2. LIVE ESP32 Connected State: Display real live sensor values
+    if (offlineBanner) offlineBanner.style.display = "none";
+    if (titleStatus) titleStatus.style.display = "none";
+    if (titleText) titleText.textContent = "Live Sensor Telemetry";
+
+    metricCards.forEach(id => {
+      document.getElementById(id)?.classList.remove("metric-unavailable");
+    });
+    coordsBox?.classList.remove("coords-box-offline");
+
+    const isGpsNoFix = t.gpsFix === "NO_FIX" || t.gpsStatus === "NO_FIX" || t.gpsValid === false;
+    if (gpsBadge) {
+      if (isGpsNoFix) {
+        gpsBadge.className = "tag-badge tag-warning";
+        gpsBadge.textContent = "GPS: NO FIX (Last Known Position)";
+      } else {
+        gpsBadge.className = "tag-badge tag-live";
+        gpsBadge.textContent = `GPS: ${t.gpsStatus || 'ACTIVE'} • ${t.gpsFix || '3D FIX'} • ${t.hdop || '0.9'} HDOP`;
+      }
+    }
+
+    setEl("dash-metric-battery", `${t.battery}%`);
+    setEl("dash-metric-voltage", t.batteryVoltage ? `${t.batteryVoltage} V (LiPo)` : `${(3.3 + (t.battery / 100) * 0.9).toFixed(2)} V (LiPo)`);
+    setEl("dash-metric-temp", `${t.temperature}°C`);
+    setEl("dash-metric-temp-sub", "Ambient SHT40");
+    setEl("dash-metric-humidity", `${t.humidity}%`);
+    setEl("dash-metric-humidity-sub", "Relative RH");
+    setEl("dash-metric-lora", t.loraStatus || "CONNECTED");
+    if (loraValue) loraValue.style.color = "var(--color-cyan)";
+    setEl("dash-metric-rssi", `RSSI: ${t.loraRssi} dBm`);
+
+    setEl("dash-coords", isGpsNoFix ? `${t.lat.toFixed(6)}, ${t.lng.toFixed(6)} (Last Known)` : `${t.lat.toFixed(6)}, ${t.lng.toFixed(6)}`);
+    setEl("dash-alt-hdop", `ALT: ${t.altitude ? t.altitude + 'm' : '--'} • HDOP: ${t.hdop ? t.hdop : (isGpsNoFix ? 'NO FIX' : '0.9')}`);
+
+    const tsEl = document.getElementById("dash-telemetry-timestamp");
+    if (tsEl) {
+      tsEl.textContent = t.lastUpdate ? new Date(t.lastUpdate).toLocaleTimeString() : 'Waiting for packet...';
+    }
+
+    updateRelativeTimestamp();
+
+  } else {
+    // 3. MOCK SIMULATOR Active State: Display simulated telemetry with clear labels
+    if (offlineBanner) offlineBanner.style.display = "none";
+    if (titleStatus) titleStatus.style.display = "none";
+    if (titleText) titleText.textContent = "Live Sensor Telemetry (Simulated)";
+
+    metricCards.forEach(id => {
+      document.getElementById(id)?.classList.remove("metric-unavailable");
+    });
+    coordsBox?.classList.remove("coords-box-offline");
+
+    if (gpsBadge) {
+      gpsBadge.className = "tag-badge tag-lora";
+      gpsBadge.textContent = `SIMULATED • GPS: ${t.gpsStatus || 'ACTIVE'} • ${t.gpsFix || '3D FIX'}`;
+    }
+
+    setEl("dash-metric-battery", `${t.battery}%`);
+    setEl("dash-metric-voltage", t.batteryVoltage ? `${t.batteryVoltage} V (Simulated)` : "4.12 V (Simulated)");
+    setEl("dash-metric-temp", `${t.temperature}°C`);
+    setEl("dash-metric-temp-sub", "Ambient SHT40 (Simulated)");
+    setEl("dash-metric-humidity", `${t.humidity}%`);
+    setEl("dash-metric-humidity-sub", "Relative RH (Simulated)");
+    setEl("dash-metric-lora", "SIMULATED");
+    if (loraValue) loraValue.style.color = "var(--color-cyan)";
+    setEl("dash-metric-rssi", `RSSI: ${t.loraRssi} dBm (Mock)`);
+
+    setEl("dash-coords", `${t.lat.toFixed(6)}, ${t.lng.toFixed(6)}`);
+    setEl("dash-alt-hdop", `ALT: ${t.altitude ? t.altitude + 'm' : '--'} • HDOP: ${t.hdop ? t.hdop : '0.9'} (Mock)`);
+
+    const tsEl = document.getElementById("dash-telemetry-timestamp");
+    if (tsEl) {
+      tsEl.textContent = t.lastUpdate ? new Date(t.lastUpdate).toLocaleTimeString() : 'Waiting for packet...';
+    }
+
+    updateRelativeTimestamp();
+  }
 }
 
 function updateRelativeTimestamp() {
   const relEl = document.getElementById("dash-telemetry-relative");
   if (!relEl) return;
+
+  const conn = appState.connection;
+  const isLiveConnected = conn.mode === "live" && conn.status === "connected";
+  const isMockMode = conn.mode === "mock" || conn.status === "mock_mode";
+
+  if (!isLiveConnected && !isMockMode) {
+    relEl.textContent = "(ESP32 disconnected)";
+    return;
+  }
 
   const lastUpdate = appState.telemetry.lastUpdate;
   if (!lastUpdate) {
@@ -657,13 +786,19 @@ function updateRelativeTimestamp() {
   }
 
   const elapsedSec = Math.max(0, Math.floor((Date.now() - lastUpdate) / 1000));
-  if (elapsedSec <= 1) {
-    relEl.textContent = "(Just now)";
-  } else if (elapsedSec < 60) {
-    relEl.textContent = `(${elapsedSec}s ago)`;
+
+  if (isLiveConnected) {
+    if (elapsedSec <= 1) {
+      relEl.textContent = "(Just now)";
+    } else if (elapsedSec < 60) {
+      relEl.textContent = `(${elapsedSec}s ago)`;
+    } else {
+      const mins = Math.floor(elapsedSec / 60);
+      relEl.textContent = `(${mins}m ago)`;
+    }
   } else {
-    const mins = Math.floor(elapsedSec / 60);
-    relEl.textContent = `(${mins}m ago)`;
+    // Mock mode
+    relEl.textContent = elapsedSec <= 1 ? "(Simulated: Just now)" : `(Simulated: ${elapsedSec}s ago)`;
   }
 }
 

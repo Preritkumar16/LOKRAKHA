@@ -7,10 +7,12 @@
 
 import { appState, updateState, notify } from "./state.js";
 import { saveIncident, saveMessage, saveNode, saveTelemetry } from "./storage.js";
-import { clearSosRequestTimeout } from "./websocket.js";
+import { clearSosRequestTimeout, resetTelemetryTimeout } from "./websocket.js";
 
 /**
  * Handle incoming standard LOKRAKSHA protocol event
+ * Accepts both real firmware lowercase events (e.g. telemetry_update, status_snapshot)
+ * and uppercase events (e.g. TELEMETRY_UPDATE) from mock simulator.
  * @param {Object} eventPayload
  * @param {string} eventPayload.event
  * @param {number} eventPayload.timestamp
@@ -22,20 +24,24 @@ export async function handleEvent(eventPayload) {
     return;
   }
 
-  const { event, timestamp = Date.now(), data = {} } = eventPayload;
-  console.log(`[EventHandler] Processing ${event}:`, data);
+  const rawEvent = eventPayload.event;
+  const normalizedEvent = String(rawEvent).trim().toUpperCase();
+  const timestamp = eventPayload.timestamp || Date.now();
+  const data = eventPayload.data || {};
 
-  switch (event) {
+  console.log(`[EventHandler] Processing ${rawEvent} -> ${normalizedEvent}:`, data);
+
+  switch (normalizedEvent) {
+    case "STATUS_SNAPSHOT":
+      await handleStatusSnapshot(data, timestamp);
+      break;
+
     case "TELEMETRY_UPDATE":
       await handleTelemetryUpdate(data, timestamp);
       break;
 
-    case "GEOFENCE_ALERT":
-      await handleGeofenceAlert(data, timestamp);
-      break;
-
-    case "RISK_UPDATE":
-      await handleRiskUpdate(data, timestamp);
+    case "SOS_STATUS":
+      await handleSosStatus(data, timestamp);
       break;
 
     case "SOS_RECEIVED":
@@ -59,16 +65,120 @@ export async function handleEvent(eventPayload) {
       handleNodeLeft(data, timestamp);
       break;
 
+    case "GEOFENCE_ALERT":
+      await handleGeofenceAlert(data, timestamp);
+      break;
+
+    case "RISK_UPDATE":
+      await handleRiskUpdate(data, timestamp);
+      break;
+
     default:
-      console.warn(`[EventHandler] Unrecognized event: ${event}`);
+      console.warn(`[EventHandler] Unrecognized event: ${rawEvent}`);
   }
 
   // Notify generic event listener
-  notify("event_processed", { event, timestamp, data });
+  notify("event_processed", { event: rawEvent, normalizedEvent, timestamp, data });
 }
 
 // ----------------- Event Handlers -----------------
 
+/**
+ * Handle status snapshot emitted by ESP32 firmware upon initial connection
+ * @param {Object} data
+ * @param {number} timestamp
+ */
+async function handleStatusSnapshot(data, timestamp) {
+  if (!data || typeof data !== "object") return;
+
+  const normalizedTs = (typeof timestamp === "number" && timestamp < 10000000000)
+    ? timestamp * 1000
+    : (timestamp || Date.now());
+
+  // 1. Synchronize Device identity & status
+  const deviceId = data.device_id || data.deviceId || data.source || data.id;
+  const deviceName = data.device_name || data.deviceName || data.name || (deviceId ? `LOKRAKSHA ${deviceId}` : appState.device.name);
+  const isSos = data.sos === true || data.status === "SOS";
+
+  updateState("device", {
+    ...appState.device,
+    id: deviceId || appState.device.id,
+    name: deviceName,
+    status: isSos ? "SOS" : "ONLINE"
+  });
+
+  // 2. Telemetry values & GPS validity handling
+  const batteryVal = data.battery !== undefined ? Number(data.battery) : appState.telemetry.battery;
+  const tempVal = data.temperature !== undefined ? Number(data.temperature) : appState.telemetry.temperature;
+  const humVal = data.humidity !== undefined ? Number(data.humidity) : appState.telemetry.humidity;
+
+  const hasGpsValidProp = data.gps_valid !== undefined || data.gpsValid !== undefined;
+  const isGpsValid = hasGpsValidProp ? (Boolean(data.gps_valid) || Boolean(data.gpsValid)) : (data.gps_fix !== "NO_FIX" && data.gpsFix !== "NO_FIX");
+  const rawLat = data.lat !== undefined ? Number(data.lat) : null;
+  const rawLng = data.lng !== undefined ? Number(data.lng) : null;
+  const isValidCoords = rawLat !== null && rawLng !== null && isFinite(rawLat) && isFinite(rawLng) && !(rawLat === 0 && rawLng === 0);
+
+  let latVal = appState.lastKnownLocation?.lat || appState.telemetry.lat;
+  let lngVal = appState.lastKnownLocation?.lng || appState.telemetry.lng;
+  let gpsStatusVal = "NO_FIX";
+  let gpsFixVal = "NO_FIX";
+  let gpsValidVal = false;
+
+  const source = appState.connection?.mode === "mock" ? "MOCK" : "REAL_ESP32";
+
+  if (isGpsValid && isValidCoords) {
+    latVal = rawLat;
+    lngVal = rawLng;
+    gpsStatusVal = "ACTIVE";
+    gpsFixVal = data.gps_fix || data.gpsFix || "3D_FIX";
+    gpsValidVal = true;
+
+    updateState("lastKnownLocation", {
+      lat: rawLat,
+      lng: rawLng,
+      altitude: data.altitude !== undefined ? Number(data.altitude) : appState.telemetry.altitude,
+      hdop: data.hdop !== undefined ? Number(data.hdop) : appState.telemetry.hdop,
+      gpsFix: gpsFixVal,
+      gpsStatus: "ACTIVE",
+      timestamp: normalizedTs,
+      source: source
+    });
+  }
+
+  const updatedTelemetry = {
+    ...appState.telemetry,
+    battery: batteryVal,
+    batteryVoltage: data.battery_voltage !== undefined ? Number(data.battery_voltage) : (data.batteryVoltage !== undefined ? Number(data.batteryVoltage) : +(3.3 + (batteryVal / 100) * 0.9).toFixed(2)),
+    temperature: tempVal,
+    humidity: humVal,
+    gpsStatus: gpsStatusVal,
+    gpsFix: gpsFixVal,
+    gpsValid: gpsValidVal,
+    lat: latVal,
+    lng: lngVal,
+    altitude: data.altitude !== undefined ? Number(data.altitude) : appState.telemetry.altitude,
+    hdop: data.hdop !== undefined ? Number(data.hdop) : appState.telemetry.hdop,
+    loraStatus: data.lora_status || data.loraStatus || appState.telemetry.loraStatus || "CONNECTED",
+    loraRssi: data.lora_rssi !== undefined ? Number(data.lora_rssi) : (data.loraRssi !== undefined ? Number(data.loraRssi) : appState.telemetry.loraRssi),
+    loraSnr: data.lora_snr !== undefined ? Number(data.lora_snr) : (data.loraSnr !== undefined ? Number(data.loraSnr) : appState.telemetry.loraSnr),
+    lastUpdate: normalizedTs
+  };
+
+  updateState("telemetry", updatedTelemetry);
+  updateState("connection", {
+    lastTelemetryTs: normalizedTs,
+    lastPing: Date.now()
+  });
+
+  resetTelemetryTimeout();
+  await saveTelemetry(updatedTelemetry);
+}
+
+/**
+ * Handle live telemetry update packet from ESP32 or mock simulator
+ * @param {Object} data
+ * @param {number} timestamp
+ */
 async function handleTelemetryUpdate(data, timestamp) {
   if (!data || typeof data !== "object") return;
 
@@ -78,7 +188,7 @@ async function handleTelemetryUpdate(data, timestamp) {
     : (timestamp || Date.now());
 
   // 1. Synchronize Device ID & Identity if provided in envelope
-  const deviceId = data.device_id || data.deviceId || data.id;
+  const deviceId = data.source || data.device_id || data.deviceId || data.id;
   if (deviceId && deviceId !== appState.device.id) {
     updateState("device", {
       ...appState.device,
@@ -93,21 +203,55 @@ async function handleTelemetryUpdate(data, timestamp) {
     ? Number(data.battery_voltage)
     : (data.batteryVoltage !== undefined ? Number(data.batteryVoltage) : +(3.3 + (batteryVal / 100) * 0.9).toFixed(2));
 
-  const gpsStatusVal = data.gps_status || data.gpsStatus || appState.telemetry.gpsStatus || "ACTIVE";
-  const gpsFixVal = data.gps_fix || data.gpsFix || (gpsStatusVal === "ACTIVE" ? "3D_FIX" : appState.telemetry.gpsFix);
-  const loraStatusVal = data.lora_status || data.loraStatus || appState.telemetry.loraStatus || "CONNECTED";
+  const tempVal = data.temperature !== undefined ? Number(data.temperature) : appState.telemetry.temperature;
+  const humVal = data.humidity !== undefined ? Number(data.humidity) : appState.telemetry.humidity;
+
+  // 3. GPS Validity and Coordinate Preservation
+  const hasGpsValidProp = data.gps_valid !== undefined || data.gpsValid !== undefined;
+  const isGpsValid = hasGpsValidProp ? (Boolean(data.gps_valid) || Boolean(data.gpsValid)) : (data.gps_fix !== "NO_FIX" && data.gpsFix !== "NO_FIX");
+  const rawLat = data.lat !== undefined ? Number(data.lat) : null;
+  const rawLng = data.lng !== undefined ? Number(data.lng) : null;
+  const isValidCoords = rawLat !== null && rawLng !== null && isFinite(rawLat) && isFinite(rawLng) && !(rawLat === 0 && rawLng === 0);
+
+  let latVal = appState.lastKnownLocation?.lat || appState.telemetry.lat;
+  let lngVal = appState.lastKnownLocation?.lng || appState.telemetry.lng;
+  let gpsStatusVal = "NO_FIX";
+  let gpsFixVal = "NO_FIX";
+  let gpsValidVal = false;
+
+  const source = appState.connection?.mode === "mock" ? "MOCK" : "REAL_ESP32";
+
+  if (isGpsValid && isValidCoords) {
+    latVal = rawLat;
+    lngVal = rawLng;
+    gpsStatusVal = "ACTIVE";
+    gpsFixVal = data.gps_fix || data.gpsFix || "3D_FIX";
+    gpsValidVal = true;
+
+    updateState("lastKnownLocation", {
+      lat: rawLat,
+      lng: rawLng,
+      altitude: data.altitude !== undefined ? Number(data.altitude) : appState.telemetry.altitude,
+      hdop: data.hdop !== undefined ? Number(data.hdop) : appState.telemetry.hdop,
+      gpsFix: gpsFixVal,
+      gpsStatus: "ACTIVE",
+      timestamp: normalizedTs,
+      source: source
+    });
+  }
 
   const updatedTelemetry = {
     ...appState.telemetry,
     battery: batteryVal,
     batteryVoltage: batteryVolt,
-    temperature: data.temperature !== undefined ? Number(data.temperature) : appState.telemetry.temperature,
-    humidity: data.humidity !== undefined ? Number(data.humidity) : appState.telemetry.humidity,
+    temperature: tempVal,
+    humidity: humVal,
     gpsStatus: gpsStatusVal,
     gpsFix: gpsFixVal,
-    loraStatus: loraStatusVal,
-    lat: data.lat !== undefined ? Number(data.lat) : appState.telemetry.lat,
-    lng: data.lng !== undefined ? Number(data.lng) : appState.telemetry.lng,
+    gpsValid: gpsValidVal,
+    loraStatus: data.lora_status || data.loraStatus || appState.telemetry.loraStatus || "CONNECTED",
+    lat: latVal,
+    lng: lngVal,
     altitude: data.altitude !== undefined ? Number(data.altitude) : appState.telemetry.altitude,
     hdop: data.hdop !== undefined ? Number(data.hdop) : appState.telemetry.hdop,
     loraRssi: data.lora_rssi !== undefined ? Number(data.lora_rssi) : (data.loraRssi !== undefined ? Number(data.loraRssi) : appState.telemetry.loraRssi),
@@ -121,7 +265,31 @@ async function handleTelemetryUpdate(data, timestamp) {
     lastPing: Date.now()
   });
 
+  resetTelemetryTimeout();
+
   await saveTelemetry(updatedTelemetry);
+}
+
+/**
+ * Handle SOS state changes emitted by hardware
+ * @param {Object} data
+ * @param {number} timestamp
+ */
+async function handleSosStatus(data, timestamp) {
+  if (!data || typeof data !== "object") return;
+  const isSos = data.sos === true || data.status === "SOS";
+  const deviceId = data.device_id || data.deviceId || data.source || appState.device.id;
+  const isLocalDevice = deviceId === appState.device.id;
+
+  if (isLocalDevice) {
+    if (isSos) {
+      await handleSosReceived({ ...data, device_id: deviceId }, timestamp);
+    } else {
+      updateState("device", { ...appState.device, status: "ONLINE" });
+      updateState("sosRequest", { status: "IDLE", timestamp: null, error: null });
+      document.getElementById("emergency-banner")?.classList.remove("visible");
+    }
+  }
 }
 
 async function handleGeofenceAlert(data, timestamp) {
@@ -199,10 +367,10 @@ async function handleSosReceived(data, timestamp) {
     data = {};
   }
 
-  const sourceId = data.device_id || data.id || "LKRK-001";
+  const sourceId = data.device_id || data.deviceId || data.source || data.id || "LKRK-001";
   const isLocalDevice = sourceId === appState.device.id;
-  const lat = typeof data.lat === "number" && isFinite(data.lat) ? data.lat : (isLocalDevice ? appState.telemetry.lat : 19.0760);
-  const lng = typeof data.lng === "number" && isFinite(data.lng) ? data.lng : (isLocalDevice ? appState.telemetry.lng : 72.8777);
+  const lat = typeof data.lat === "number" && isFinite(data.lat) && data.lat !== 0 ? data.lat : (isLocalDevice ? appState.telemetry.lat : 19.2060);
+  const lng = typeof data.lng === "number" && isFinite(data.lng) && data.lng !== 0 ? data.lng : (isLocalDevice ? appState.telemetry.lng : 72.8746);
 
   // 1. Confirm SOS Request state if this was from local device
   if (isLocalDevice) {
@@ -326,7 +494,7 @@ function handleMessageStatus(data, timestamp) {
 }
 
 async function handleNodeUpdate(data, timestamp) {
-  const nodeId = data.id || data.device_id;
+  const nodeId = data.id || data.device_id || data.deviceId || data.source;
   if (!nodeId) return;
 
   const existingIndex = appState.nodes.findIndex(n => n.id === nodeId);
@@ -351,8 +519,8 @@ async function handleNodeUpdate(data, timestamp) {
       rssi: data.rssi || -75,
       snr: data.snr || 8.0,
       battery: data.battery || 80,
-      lat: data.lat || 19.0760,
-      lng: data.lng || 72.8777,
+      lat: data.lat || 19.2060,
+      lng: data.lng || 72.8746,
       temperature: data.temperature || 31.0,
       humidity: data.humidity || 70,
       lastSeen: timestamp,
@@ -366,7 +534,8 @@ async function handleNodeUpdate(data, timestamp) {
 }
 
 function handleNodeLeft(data, timestamp) {
-  const nodeId = data.id || data.device_id;
+  const nodeId = data.id || data.device_id || data.deviceId || data.source;
+  if (!nodeId) return;
   const updatedNodes = appState.nodes.map(n => {
     if (n.id === nodeId) {
       return { ...n, status: "OFFLINE", lastSeen: timestamp };

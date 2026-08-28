@@ -64,6 +64,9 @@ async function bootstrapApp() {
   // 7. Connect to local device WebSocket (with auto-fallback to mock engine)
   initWebSocket();
 
+  window.simulateEvent = simulateEvent;
+  window.appState = appState;
+
   console.log("[LOKRAKSHA] Initialization complete. Node ready.");
 }
 
@@ -79,7 +82,7 @@ async function loadOrSeedData() {
   ]);
 
   // Incidents
-  if (storedIncidents && storedIncidents.length > 0) {
+  if (storedIncidents && storedIncidents.length > 0 && storedIncidents.some(i => i.lat > 19.15)) {
     updateState("incidents", storedIncidents);
   } else {
     updateState("incidents", initialMockData.incidents);
@@ -99,7 +102,7 @@ async function loadOrSeedData() {
   }
 
   // Nearby Nodes
-  if (storedNodes && storedNodes.length > 0) {
+  if (storedNodes && storedNodes.length > 0 && storedNodes.some(n => n.lat > 19.15)) {
     updateState("nodes", storedNodes);
   } else {
     updateState("nodes", initialMockData.nodes);
@@ -137,6 +140,74 @@ function setupShellInteractions() {
     document.getElementById("emergency-banner")?.classList.remove("visible");
   });
 
+  // Update header connection & telemetry tags
+  const updateHeaderTags = () => {
+    const conn = appState.connection;
+    const t = appState.telemetry;
+    const isLiveConnected = conn.mode === "live" && conn.status === "connected";
+    const isMockMode = conn.mode === "mock" || conn.status === "mock_mode";
+
+    const headerConnTag = document.getElementById("header-connection-tag");
+    if (headerConnTag) {
+      if (isLiveConnected) {
+        headerConnTag.className = "tag-badge tag-live";
+        headerConnTag.textContent = "● LIVE ESP32 LINK";
+      } else if (conn.status === "connecting" || conn.status === "reconnecting") {
+        headerConnTag.className = "tag-badge tag-warning";
+        headerConnTag.textContent = "◌ CONNECTING...";
+      } else if (isMockMode) {
+        headerConnTag.className = "tag-badge tag-lora";
+        headerConnTag.textContent = "● MOCK SIMULATOR";
+      } else {
+        headerConnTag.className = "tag-badge tag-offline";
+        headerConnTag.textContent = "○ ESP32 OFFLINE";
+      }
+    }
+
+    const loraTag = document.getElementById("header-lora-tag");
+    if (loraTag) {
+      if (isLiveConnected) {
+        loraTag.className = "tag-badge tag-lora";
+        loraTag.textContent = `LoRa: ${t.loraStatus || 'CONNECTED'}`;
+      } else if (isMockMode) {
+        loraTag.className = "tag-badge tag-lora";
+        loraTag.textContent = "LoRa: SIMULATED";
+      } else {
+        loraTag.className = "tag-badge tag-offline";
+        loraTag.textContent = "LoRa: OFFLINE";
+      }
+    }
+
+    const gpsTag = document.getElementById("header-gps-tag");
+    if (gpsTag) {
+      if (isLiveConnected) {
+        const isGpsNoFix = t.gpsFix === "NO_FIX" || t.gpsStatus === "NO_FIX" || t.gpsValid === false;
+        gpsTag.className = isGpsNoFix ? "tag-badge tag-warning" : "tag-badge tag-live";
+        gpsTag.textContent = isGpsNoFix ? "GPS: UNAVAILABLE" : `GPS: ${t.gpsFix || 'ACTIVE'}`;
+      } else if (isMockMode) {
+        gpsTag.className = "tag-badge tag-lora";
+        gpsTag.textContent = "GPS: SIMULATED";
+      } else {
+        gpsTag.className = "tag-badge tag-warning";
+        gpsTag.textContent = "GPS: LAST KNOWN";
+      }
+    }
+
+    const sidebarMode = document.getElementById("sidebar-peer-mode");
+    if (sidebarMode) {
+      sidebarMode.textContent = isLiveConnected
+        ? "LOCAL WI-FI DIRECT"
+        : (isMockMode ? "MOCK SIMULATOR" : "DISCONNECTED");
+    }
+
+    const sidebarDot = document.getElementById("sidebar-status-dot");
+    if (sidebarDot) {
+      sidebarDot.className = isLiveConnected
+        ? "status-dot status-safe"
+        : (conn.status === "connecting" || conn.status === "reconnecting" ? "status-dot status-caution" : "status-dot status-offline");
+    }
+  };
+
   // Subscribe to incidents badge update in sidebar
   subscribe("incidents", (incidents) => {
     const badge = document.getElementById("sidebar-incident-badge");
@@ -158,53 +229,20 @@ function setupShellInteractions() {
   });
 
   // Subscribe to connection state for universal header and sidebar status
-  subscribe("connection", (conn) => {
-    const headerConnTag = document.getElementById("header-connection-tag");
-    if (headerConnTag) {
-      if (conn.status === "connected") {
-        headerConnTag.className = "tag-badge tag-live";
-        headerConnTag.textContent = "● LIVE ESP32 LINK";
-      } else if (conn.status === "connecting" || conn.status === "reconnecting") {
-        headerConnTag.className = "tag-badge tag-lora";
-        headerConnTag.textContent = "◌ CONNECTING...";
-      } else if (conn.status === "mock_mode") {
-        headerConnTag.className = "tag-badge tag-lora";
-        headerConnTag.textContent = "● MOCK SIMULATOR";
-      } else {
-        headerConnTag.className = "tag-badge";
-        headerConnTag.textContent = "○ ESP32 OFFLINE";
-      }
-    }
-
-    const sidebarMode = document.getElementById("sidebar-peer-mode");
-    if (sidebarMode) {
-      sidebarMode.textContent = conn.status === "connected"
-        ? "LOCAL WI-FI DIRECT"
-        : (conn.mode === "mock" ? "MOCK SIMULATOR" : "DISCONNECTED");
-    }
-
-    const sidebarDot = document.getElementById("sidebar-status-dot");
-    if (sidebarDot) {
-      sidebarDot.className = conn.status === "connected"
-        ? "status-dot status-safe"
-        : (conn.status === "connecting" || conn.status === "reconnecting" ? "status-dot status-caution" : "status-dot status-restricted");
-    }
-  });
+  subscribe("connection", () => updateHeaderTags());
 
   // Subscribe to telemetry for header status tags
-  subscribe("telemetry", (t) => {
-    const loraTag = document.getElementById("header-lora-tag");
-    if (loraTag) loraTag.textContent = `LoRa: ${t.loraStatus || 'CONNECTED'}`;
-
-    const gpsTag = document.getElementById("header-gps-tag");
-    if (gpsTag) gpsTag.textContent = `GPS: ${t.gpsStatus || 'ACTIVE'}`;
-  });
+  subscribe("telemetry", () => updateHeaderTags());
+  subscribe("lastKnownLocation", () => updateHeaderTags());
 
   // Subscribe to device identity for sidebar
   subscribe("device", (dev) => {
     const sidebarName = document.getElementById("sidebar-peer-name");
     if (sidebarName) sidebarName.textContent = `${dev.id} (${dev.name.replace("LOKRAKSHA ", "")})`;
   });
+
+  // Initial sync
+  updateHeaderTags();
 }
 
 /**
@@ -227,20 +265,20 @@ function setupDemoDrawer() {
   document.getElementById("sim-safe-btn")?.addEventListener("click", () => {
     simulateEvent("GEOFENCE_ALERT", {
       zone_id: "ZONE-SAFE-01",
-      zone_name: "Campus Quad Safe Zone",
+      zone_name: "TCET Campus Quad Safe Zone",
       zone_type: "SAFE",
-      message: "You are currently inside an authorized safe zone.",
+      message: "You are currently inside an authorized TCET campus safe zone.",
       distance: 145,
       recommended_action: "Normal operation. Location beacon active."
     });
-    showToast("Simulated Entry: SAFE ZONE", "safe");
+    showToast("Simulated Entry: TCET SAFE ZONE", "safe");
   });
 
   // 2. Simulate Caution Zone
   document.getElementById("sim-caution-btn")?.addEventListener("click", () => {
     simulateEvent("GEOFENCE_ALERT", {
       zone_id: "ZONE-CAUTION-01",
-      zone_name: "North Perimeter Corridor",
+      zone_name: "Thakur Village Transit Corridor",
       zone_type: "CAUTION",
       message: "Exercise increased awareness in this zone.",
       distance: 35,
@@ -253,7 +291,7 @@ function setupDemoDrawer() {
   document.getElementById("sim-restricted-btn")?.addEventListener("click", () => {
     simulateEvent("GEOFENCE_ALERT", {
       zone_id: "ZONE-RESTRICTED-01",
-      zone_name: "Hazardous Chemical / Sump Zone",
+      zone_name: "Western Express Highway Boundary Hazard",
       zone_type: "RESTRICTED",
       message: "Safety warning triggered: Prohibited restricted boundary breached.",
       distance: 0,
@@ -272,8 +310,8 @@ function setupDemoDrawer() {
     simulateEvent("SOS_RECEIVED", {
       device_id: "LKRK-004",
       device_name: "LOKRAKSHA Delta",
-      lat: 19.0785,
-      lng: 72.8745,
+      lat: 19.2078,
+      lng: 72.8740,
       risk: "CRITICAL",
       incident_type: "SOS",
       temperature: 33.0,
@@ -292,8 +330,8 @@ function setupDemoDrawer() {
       status: "ONLINE",
       risk: "LOW",
       rssi: -72,
-      lat: 19.0760 + (Math.random() - 0.5) * 0.01,
-      lng: 72.8777 + (Math.random() - 0.5) * 0.01,
+      lat: 19.2060 + (Math.random() - 0.5) * 0.006,
+      lng: 72.8746 + (Math.random() - 0.5) * 0.006,
       battery: 88,
       temperature: 30.5,
       humidity: 71
@@ -301,15 +339,51 @@ function setupDemoDrawer() {
     showToast(`Peer Node Discovered: ${randomId}`, "safe");
   });
 
-  // 7. Reset State
+  // 7. Simulate Live ESP32 Connected at New GPS coordinates
+  document.getElementById("sim-gps-move-btn")?.addEventListener("click", () => {
+    updateState("connection", {
+      status: "connected",
+      mode: "live"
+    });
+    simulateEvent("TELEMETRY_UPDATE", {
+      device_id: appState.device.id,
+      lat: 19.208500,
+      lng: 72.876000,
+      gps_status: "ACTIVE",
+      gps_fix: "3D_FIX",
+      gps_valid: true,
+      battery: 92,
+      temperature: 31.8,
+      humidity: 70
+    });
+    showToast("Simulated Live ESP32: New GPS Fix (19.2085, 72.8760)", "safe");
+  });
+
+  // 8. Simulate GPS Signal Loss while connected
+  document.getElementById("sim-gps-loss-btn")?.addEventListener("click", () => {
+    updateState("connection", {
+      status: "connected",
+      mode: "live"
+    });
+    simulateEvent("TELEMETRY_UPDATE", {
+      device_id: appState.device.id,
+      gps_status: "NO_FIX",
+      gps_fix: "NO_FIX",
+      gps_valid: false,
+      battery: 91
+    });
+    showToast("Simulated GPS Signal Loss (Last Known Preserved)", "caution");
+  });
+
+  // 9. Reset State
   document.getElementById("sim-reset-btn")?.addEventListener("click", () => {
     updateState("device", { ...appState.device, status: "ONLINE" });
     updateState("sosRequest", { status: "IDLE", timestamp: null, error: null });
     updateState("currentZone", {
       id: "ZONE-SAFE-01",
-      name: "Campus Quad Safe Zone",
+      name: "TCET Campus Quad Safe Zone",
       type: "SAFE",
-      message: "You are currently inside an authorized safe zone.",
+      message: "You are currently inside an authorized TCET campus safe zone.",
       distanceToBoundaryMeters: 145,
       recommendedAction: "Normal operation. Location beacon active."
     });

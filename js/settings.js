@@ -20,8 +20,9 @@ export function initSettings() {
   subscribe("connection", () => {
     const badge = document.getElementById("setting-conn-badge");
     if (badge) {
-      badge.className = `tag-badge ${appState.connection.status === 'connected' ? 'tag-live' : 'tag-lora'}`;
-      badge.textContent = appState.connection.status.toUpperCase();
+      const status = appState.connection.status;
+      badge.className = `tag-badge ${status === 'connected' ? 'tag-live' : (status === 'connecting' || status === 'mock_mode' ? 'tag-lora' : '')}`;
+      badge.textContent = status.toUpperCase();
     }
   });
 }

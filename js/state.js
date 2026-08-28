@@ -19,18 +19,19 @@ export const appState = {
     isVerified: true
   },
 
-  // Live real-time telemetry from ESP32
+  // Live real-time telemetry from ESP32 (Centered at Thakur College of Engineering: 19.2060, 72.8746)
   telemetry: {
     battery: 84,
     batteryVoltage: 4.12,
     temperature: 31.4,
     humidity: 72,
-    lat: 19.0760,
-    lng: 72.8777,
+    lat: 19.2060,
+    lng: 72.8746,
     altitude: 14.2,
     hdop: 0.9,
     gpsFix: "3D_FIX",
     gpsStatus: "ACTIVE",
+    gpsValid: true,
     loraStatus: "CONNECTED",
     loraFrequency: "868.1 MHz",
     loraRssi: -78,
@@ -38,12 +39,24 @@ export const appState = {
     lastUpdate: Date.now()
   },
 
+  // Persistent Last Known GPS Location (never erased on disconnect)
+  lastKnownLocation: {
+    lat: 19.2060,
+    lng: 72.8746,
+    altitude: 14.2,
+    hdop: 0.9,
+    gpsFix: "3D_FIX",
+    gpsStatus: "ACTIVE",
+    timestamp: Date.now(),
+    source: "INITIAL" // "REAL_ESP32" | "MOCK" | "INITIAL"
+  },
+
   // Geo-fence zone state (computed on device)
   currentZone: {
     id: "ZONE-SAFE-01",
-    name: "Campus Quad Safe Zone",
+    name: "TCET Campus Quad Safe Zone",
     type: "SAFE", // SAFE, CAUTION, RESTRICTED
-    message: "You are currently inside an authorized safe zone.",
+    message: "You are currently inside an authorized TCET campus safe zone.",
     distanceToBoundaryMeters: 145,
     recommendedAction: "Normal operation. Location beacon active."
   },

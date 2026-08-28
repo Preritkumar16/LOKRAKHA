@@ -398,6 +398,18 @@ html, body {
   color: var(--color-cyan);
 }
 
+.tag-badge.tag-offline {
+  background-color: var(--color-restricted-bg);
+  border-color: var(--color-restricted-border);
+  color: var(--color-restricted);
+}
+
+.tag-badge.tag-warning {
+  background-color: var(--color-caution-bg);
+  border-color: var(--color-caution-border);
+  color: var(--color-caution);
+}
+
 /* Header Right Area */
 .header-right {
   display: flex;

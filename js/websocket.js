@@ -9,199 +9,367 @@
 import { appState, updateState } from "./state.js";
 import { handleEvent } from "./event-handler.js";
 
+// Configurable constants
 export const DEFAULT_ESP32_WS_URL = "ws://192.168.4.1/ws";
-const RECONNECT_INTERVAL_MS = 3000;
-const MOCK_INTERVAL_MS = 3000;
+export const RECONNECT_DELAY = 3000;
+export const CONNECTION_TIMEOUT = 5000;
+export const TELEMETRY_TIMEOUT = 10000;
+export const MOCK_INTERVAL_MS = 3000;
+
+// Aliases for backwards-compatibility
+export const RECONNECT_INTERVAL_MS = RECONNECT_DELAY;
+export const CONNECTION_TIMEOUT_MS = CONNECTION_TIMEOUT;
+export const TELEMETRY_TIMEOUT_MS = TELEMETRY_TIMEOUT;
 
 let socket = null;
 let reconnectTimer = null;
+let connectionTimeoutTimer = null;
+let telemetryTimeoutTimer = null;
 let mockInterval = null;
-let isExplicitDisconnect = false;
+let isExplicitDisconnect = true; // Initial state is disconnected until explicitly connected
 let reconnectAttempts = 0;
 let sosTimeoutTimer = null;
+let activeTargetUrl = DEFAULT_ESP32_WS_URL;
 
 /**
- * Initialize local WebSocket connection to physical LOKRAKSHA ESP32
+ * Set connection state and notify subscribers
+ * @param {string} status - 'disconnected' | 'connecting' | 'connected' | 'mock_mode'
+ * @param {Object} extraProps
+ */
+export function setConnectionState(status, extraProps = {}) {
+  updateState("connection", {
+    status: status,
+    ...extraProps
+  });
+}
+
+/**
+ * Initialize local WebSocket manager (starts in clean DISCONNECTED state on fresh load)
  * @param {string} url - e.g. "ws://192.168.4.1/ws"
  */
 export function initWebSocket(url = DEFAULT_ESP32_WS_URL) {
-  return connectEsp32(url);
+  activeTargetUrl = (typeof url === "string" && url.startsWith("ws")) ? url : DEFAULT_ESP32_WS_URL;
+  isExplicitDisconnect = true;
+  reconnectAttempts = 0;
+
+  clearAllTimers();
+  cleanupSocket();
+
+  setConnectionState("disconnected", {
+    mode: "live",
+    endpoint: activeTargetUrl,
+    reconnectAttempts: 0
+  });
+
+  console.log(`[ESP32 WS] Initialized connection manager in DISCONNECTED state (${activeTargetUrl})`);
 }
 
 /**
  * Connect directly to the physical ESP32 Access Point over WebSocket
  * @param {string} url - Target WebSocket URL (default: ws://192.168.4.1/ws)
  */
-export function connectEsp32(url = DEFAULT_ESP32_WS_URL) {
-  const targetUrl = (typeof url === "string" && url.startsWith("ws")) ? url : DEFAULT_ESP32_WS_URL;
+export function connectESP32(url = DEFAULT_ESP32_WS_URL) {
+  const targetUrl = (typeof url === "string" && url.startsWith("ws")) ? url : (activeTargetUrl || DEFAULT_ESP32_WS_URL);
+  activeTargetUrl = targetUrl;
   isExplicitDisconnect = false;
+
   stopMockTelemetryEngine();
+  clearAllTimers();
+  cleanupSocket();
 
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-  }
-
-  if (socket) {
-    try {
-      socket.onopen = null;
-      socket.onmessage = null;
-      socket.onerror = null;
-      socket.onclose = null;
-      socket.close();
-    } catch (e) {
-      // Ignore close errors on stale socket
-    }
-    socket = null;
-  }
-
-  updateState("connection", {
-    status: reconnectAttempts > 0 ? "reconnecting" : "connecting",
+  setConnectionState("connecting", {
     mode: "live",
     endpoint: targetUrl,
     reconnectAttempts: reconnectAttempts
   });
 
+  console.log(`[ESP32 WS] Connecting to ${targetUrl} (Attempt: ${reconnectAttempts + 1})...`);
+
   try {
-    console.log(`[ESP32 WS] Connecting to ${targetUrl} (Attempt: ${reconnectAttempts + 1})...`);
     const currentSocket = new WebSocket(targetUrl);
     socket = currentSocket;
 
-    currentSocket.onopen = () => {
+    // Start connection timeout watchdog (5000ms)
+    startConnectionTimeout(targetUrl, currentSocket);
+
+    currentSocket.onopen = (event) => {
       if (socket !== currentSocket) return;
-      console.log(`[ESP32 WS] Successfully connected to physical LOKRAKSHA ESP32 at ${targetUrl}`);
-      reconnectAttempts = 0;
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-        reconnectTimer = null;
-      }
-      stopMockTelemetryEngine();
-
-      updateState("connection", {
-        status: "connected",
-        mode: "live",
-        endpoint: targetUrl,
-        reconnectAttempts: 0,
-        lastPing: Date.now()
-      });
-
-      updateState("device", {
-        ...appState.device,
-        status: appState.device.status === "SOS" ? "SOS" : "ONLINE"
-      });
+      handleWebSocketOpen(event, targetUrl);
     };
 
     currentSocket.onmessage = (event) => {
       if (socket !== currentSocket) return;
-      try {
-        const payload = JSON.parse(event.data);
-        updateState("connection", {
-          lastPing: Date.now()
-        });
-        handleEvent(payload);
-      } catch (err) {
-        console.error("[ESP32 WS] Failed to parse JSON message envelope:", event.data, err);
-      }
+      handleWebSocketMessage(event);
     };
 
     currentSocket.onerror = (err) => {
       if (socket !== currentSocket) return;
-      console.warn(`[ESP32 WS] Connection error on ${targetUrl}:`, err);
+      handleWebSocketError(err, targetUrl);
     };
 
     currentSocket.onclose = (event) => {
-      console.log(`[ESP32 WS] Socket closed (code: ${event.code}, reason: ${event.reason || "none"}).`);
-      if (socket === currentSocket) {
-        socket = null;
-      }
-
-      // If user switched to mock mode, disconnected, or socket is superseded, ignore
-      if (isExplicitDisconnect || appState.connection.mode !== "live" || socket !== null) {
-        return;
-      }
-
-      reconnectAttempts++;
-      updateState("connection", {
-        status: "reconnecting",
-        mode: "live",
-        endpoint: targetUrl,
-        reconnectAttempts: reconnectAttempts
-      });
-      scheduleAutoReconnect(targetUrl);
+      if (socket !== currentSocket && socket !== null) return;
+      handleWebSocketClose(event, targetUrl);
     };
   } catch (err) {
-    console.error("[ESP32 WS] Initialization error:", err);
-    if (!isExplicitDisconnect && appState.connection.mode === "live") {
-      reconnectAttempts++;
-      updateState("connection", {
-        status: "reconnecting",
-        mode: "live",
-        endpoint: targetUrl,
-        reconnectAttempts: reconnectAttempts
-      });
-      scheduleAutoReconnect(targetUrl);
-    }
+    console.error("[ESP32 WS] Failed to instantiate WebSocket:", err);
+    handleWebSocketClose({ code: 1006, reason: "Instantiation Error" }, targetUrl);
+  }
+}
+
+// Alias with camelCase
+export const connectEsp32 = connectESP32;
+
+/**
+ * Handle successful WebSocket open event
+ * @param {Event} event
+ * @param {string} targetUrl
+ */
+export function handleWebSocketOpen(event, targetUrl) {
+  console.log(`[ESP32 WS] Successfully connected to physical LOKRAKSHA ESP32 at ${targetUrl}`);
+  clearConnectionTimeout();
+  reconnectAttempts = 0;
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  stopMockTelemetryEngine();
+
+  setConnectionState("connected", {
+    mode: "live",
+    endpoint: targetUrl,
+    reconnectAttempts: 0,
+    lastPing: Date.now()
+  });
+
+  updateState("device", {
+    ...appState.device,
+    status: appState.device.status === "SOS" ? "SOS" : "ONLINE"
+  });
+
+  // Start telemetry freshness watchdog (10000ms)
+  startTelemetryTimeout();
+}
+
+/**
+ * Handle incoming WebSocket message
+ * @param {MessageEvent} event
+ */
+export function handleWebSocketMessage(event) {
+  try {
+    const payload = JSON.parse(event.data);
+    updateState("connection", {
+      lastPing: Date.now()
+    });
+    handleEvent(payload);
+  } catch (err) {
+    console.error("[ESP32 WS] Failed to parse JSON message envelope:", event.data, err);
   }
 }
 
 /**
- * Schedule automatic reconnection attempt
+ * Handle WebSocket error event
+ * @param {Event} err
+ * @param {string} targetUrl
+ */
+export function handleWebSocketError(err, targetUrl) {
+  console.warn(`[ESP32 WS] Connection error on ${targetUrl}:`, err);
+  // Note: onclose will follow onerror in standard WebSocket lifecycle
+}
+
+/**
+ * Handle WebSocket close event
+ * @param {CloseEvent|Object} event
+ * @param {string} targetUrl
+ */
+export function handleWebSocketClose(event, targetUrl) {
+  console.log(`[ESP32 WS] Socket closed (code: ${event?.code}, reason: ${event?.reason || "none"}).`);
+
+  clearConnectionTimeout();
+  clearTelemetryTimeout();
+  cleanupSocket();
+
+  // If user explicitly switched to mock mode or explicitly disconnected, do not reconnect
+  if (isExplicitDisconnect || appState.connection.mode !== "live") {
+    setConnectionState("disconnected", {
+      mode: appState.connection.mode,
+      endpoint: targetUrl,
+      reconnectAttempts: 0
+    });
+    return;
+  }
+
+  // Set state immediately to DISCONNECTED
+  reconnectAttempts++;
+  setConnectionState("disconnected", {
+    mode: "live",
+    endpoint: targetUrl,
+    reconnectAttempts: reconnectAttempts
+  });
+
+  // Mark device as OFFLINE if it wasn't in active SOS
+  if (appState.device.status !== "SOS") {
+    updateState("device", {
+      ...appState.device,
+      status: "OFFLINE"
+    });
+  }
+
+  // Schedule automatic reconnection after delay
+  scheduleReconnect(targetUrl);
+}
+
+/**
+ * Schedule automatic reconnection attempt (State stays DISCONNECTED during delay)
  * @param {string} url
  */
-function scheduleAutoReconnect(url = DEFAULT_ESP32_WS_URL) {
-  const targetUrl = (typeof url === "string" && url.startsWith("ws")) ? url : DEFAULT_ESP32_WS_URL;
+export function scheduleReconnect(url = activeTargetUrl) {
+  const targetUrl = (typeof url === "string" && url.startsWith("ws")) ? url : (activeTargetUrl || DEFAULT_ESP32_WS_URL);
   if (reconnectTimer || isExplicitDisconnect || appState.connection.mode !== "live") return;
 
-  console.log(`[ESP32 WS] Scheduling automatic reconnection in ${RECONNECT_INTERVAL_MS / 1000}s...`);
+  console.log(`[ESP32 WS] Scheduling automatic reconnection in ${RECONNECT_DELAY / 1000}s...`);
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     if (!isExplicitDisconnect && appState.connection.mode === "live") {
-      connectEsp32(targetUrl);
+      connectESP32(targetUrl);
     }
-  }, RECONNECT_INTERVAL_MS);
+  }, RECONNECT_DELAY);
+}
+
+/**
+ * Start connection timeout timer (5000ms)
+ * @param {string} targetUrl
+ * @param {WebSocket} targetSocket
+ */
+export function startConnectionTimeout(targetUrl, targetSocket) {
+  clearConnectionTimeout();
+  connectionTimeoutTimer = setTimeout(() => {
+    if (socket === targetSocket && socket.readyState === WebSocket.CONNECTING) {
+      console.warn(`[ESP32 WS] Connection attempt to ${targetUrl} timed out after ${CONNECTION_TIMEOUT}ms`);
+      cleanupSocket();
+      handleWebSocketClose({ code: 4008, reason: "Connection Timeout" }, targetUrl);
+    }
+  }, CONNECTION_TIMEOUT);
+}
+
+/**
+ * Clear connection timeout timer
+ */
+export function clearConnectionTimeout() {
+  if (connectionTimeoutTimer) {
+    clearTimeout(connectionTimeoutTimer);
+    connectionTimeoutTimer = null;
+  }
+}
+
+/**
+ * Start or restart telemetry freshness watchdog (10000ms)
+ */
+export function startTelemetryTimeout() {
+  clearTelemetryTimeout();
+  telemetryTimeoutTimer = setTimeout(() => {
+    if (appState.connection.status === "connected" && appState.connection.mode === "live") {
+      console.warn(`[ESP32 WS] Telemetry timeout: No TELEMETRY_UPDATE received for ${TELEMETRY_TIMEOUT / 1000}s. Marking device as unreachable.`);
+      if (socket) {
+        try {
+          socket.close(4000, "Telemetry timeout / Device unreachable");
+        } catch (e) {}
+      } else {
+        handleWebSocketClose({ code: 4000, reason: "Telemetry timeout" }, activeTargetUrl);
+      }
+    }
+  }, TELEMETRY_TIMEOUT);
+}
+
+/**
+ * Reset telemetry timeout watchdog upon receiving valid TELEMETRY_UPDATE
+ */
+export function resetTelemetryTimeout() {
+  if (appState.connection.status === "connected" && appState.connection.mode === "live") {
+    startTelemetryTimeout();
+  }
+}
+
+/**
+ * Clear telemetry timeout watchdog
+ */
+export function clearTelemetryTimeout() {
+  if (telemetryTimeoutTimer) {
+    clearTimeout(telemetryTimeoutTimer);
+    telemetryTimeoutTimer = null;
+  }
 }
 
 /**
  * Explicitly disconnect from the physical ESP32 and stop auto-reconnect
  */
-export function disconnectEsp32() {
+export function disconnectESP32() {
   console.log("[ESP32 WS] User triggered explicit disconnect.");
   isExplicitDisconnect = true;
   reconnectAttempts = 0;
 
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-  }
+  clearAllTimers();
+  cleanupSocket();
 
+  setConnectionState("disconnected", {
+    mode: "live",
+    reconnectAttempts: 0
+  });
+
+  if (appState.device.status !== "SOS") {
+    updateState("device", {
+      ...appState.device,
+      status: "OFFLINE"
+    });
+  }
+}
+
+// Alias with camelCase
+export const disconnectEsp32 = disconnectESP32;
+
+/**
+ * Toggle ESP32 connection state
+ * @param {string} url
+ */
+export function toggleESP32Connection(url = DEFAULT_ESP32_WS_URL) {
+  if (appState.connection.status === "connected") {
+    disconnectESP32();
+  } else {
+    connectESP32(url);
+  }
+}
+
+// Alias with camelCase
+export const toggleEsp32Connection = toggleESP32Connection;
+
+/**
+ * Helper to close and cleanup socket instance
+ */
+function cleanupSocket() {
   if (socket) {
     try {
       socket.onopen = null;
       socket.onmessage = null;
       socket.onerror = null;
       socket.onclose = null;
-      socket.close();
+      if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+        socket.close();
+      }
     } catch (e) {}
     socket = null;
   }
-
-  updateState("connection", {
-    status: "disconnected",
-    mode: "live",
-    reconnectAttempts: 0
-  });
 }
 
 /**
- * Toggle ESP32 connection state
- * @param {string} url
+ * Helper to clear all scheduled timers
  */
-export function toggleEsp32Connection(url = DEFAULT_ESP32_WS_URL) {
-  if (appState.connection.status === "connected") {
-    disconnectEsp32();
-  } else {
-    connectEsp32(url);
+function clearAllTimers() {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
   }
+  clearConnectionTimeout();
+  clearTelemetryTimeout();
 }
 
 /**
@@ -212,24 +380,10 @@ export function switchToMockMode() {
   isExplicitDisconnect = true;
   reconnectAttempts = 0;
 
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-  }
+  clearAllTimers();
+  cleanupSocket();
 
-  if (socket) {
-    try {
-      socket.onopen = null;
-      socket.onmessage = null;
-      socket.onerror = null;
-      socket.onclose = null;
-      socket.close();
-    } catch (e) {}
-    socket = null;
-  }
-
-  updateState("connection", {
-    status: "mock_mode",
+  setConnectionState("mock_mode", {
     mode: "mock",
     endpoint: "LOCAL_SIMULATOR",
     reconnectAttempts: 0
@@ -248,7 +402,7 @@ export function switchToLiveMode(url = DEFAULT_ESP32_WS_URL) {
   const targetUrl = (typeof url === "string" && url.startsWith("ws")) ? url : DEFAULT_ESP32_WS_URL;
   stopMockTelemetryEngine();
   updateState("demoMode", false);
-  connectEsp32(targetUrl);
+  connectESP32(targetUrl);
 }
 
 /**
@@ -332,7 +486,6 @@ export async function sendSosRequest(deviceId = appState.device.id) {
 
     console.log("[WebSocket Demo] Simulating ESP32 processing SOS_REQUEST (750ms response delay)...");
 
-    // Simulate realistic hardware processing delay (750ms)
     setTimeout(() => {
       if (appState.sosRequest.status === "REQUESTING") {
         console.log("[WebSocket Demo] Simulated ESP32 emitting confirmed SOS_RECEIVED!");
@@ -390,6 +543,11 @@ export function simulateEvent(eventName, data = {}) {
     data: data
   };
   return handleEvent(payload);
+}
+
+if (typeof window !== "undefined") {
+  window.simulateEvent = simulateEvent;
+  window.appState = appState;
 }
 
 /**

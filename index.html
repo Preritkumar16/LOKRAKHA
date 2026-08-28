@@ -108,10 +108,10 @@
         <!-- Sidebar Peer Connection Status Foot -->
         <div class="sidebar-footer">
           <div class="peer-chip">
-            <div class="status-dot status-safe" id="sidebar-status-dot"></div>
+            <div class="status-dot status-offline" id="sidebar-status-dot"></div>
             <div class="peer-info">
               <span class="peer-name" id="sidebar-peer-name">LKRK-001 (Alpha)</span>
-              <span class="peer-mode" id="sidebar-peer-mode">LOCAL WI-FI DIRECT</span>
+              <span class="peer-mode" id="sidebar-peer-mode">DISCONNECTED</span>
             </div>
           </div>
         </div>
@@ -134,9 +134,9 @@
             </div>
 
             <div class="header-tags">
-              <span class="tag-badge tag-live" id="header-connection-tag">● LOCAL PEER LINK</span>
-              <span class="tag-badge tag-lora" id="header-lora-tag">LoRa: 868.1 MHz</span>
-              <span class="tag-badge" id="header-gps-tag">GPS: 3D FIX</span>
+              <span class="tag-badge tag-offline" id="header-connection-tag">○ ESP32 OFFLINE</span>
+              <span class="tag-badge tag-offline" id="header-lora-tag">LoRa: OFFLINE</span>
+              <span class="tag-badge tag-warning" id="header-gps-tag">GPS: LAST KNOWN</span>
             </div>
           </div>
 
@@ -204,6 +204,12 @@
         </button>
         <button id="sim-node-join-btn" class="demo-btn">
           <span>📡</span> Discover Node
+        </button>
+        <button id="sim-gps-move-btn" class="demo-btn" style="border-color:var(--color-cyan);">
+          <span>📍</span> Live GPS (New)
+        </button>
+        <button id="sim-gps-loss-btn" class="demo-btn" style="border-color:var(--color-caution);">
+          <span>📡</span> GPS Lost (No Fix)
         </button>
       </div>
 
